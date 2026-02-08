@@ -213,6 +213,14 @@ function parseChatId(value) {
   return typeof value === 'string' && value.trim() ? value.trim() : '';
 }
 
+function scheduleConnectionExpiry(connection) {
+  if (connection.expiryTimer) clearTimeout(connection.expiryTimer);
+  connection.expiryTimer = setTimeout(() => {
+    delete connections[connection.id];
+  }, CONNECTION_TTL_MS);
+  connection.expiryTimer.unref();
+}
+
 function createConnection() {
   const id = crypto.randomUUID();
   connections[id] = {
@@ -220,13 +228,16 @@ function createConnection() {
     model: DEFAULT_MODEL,
     histories: {},
     nextImage: null,
-    lastUsed: Date.now()
+    lastUsed: Date.now(),
+    expiryTimer: null
   };
+  scheduleConnectionExpiry(connections[id]);
   return connections[id];
 }
 
 function touchConnection(connection) {
   connection.lastUsed = Date.now();
+  scheduleConnectionExpiry(connection);
 }
 
 function parseConnectionId(value) {
@@ -254,14 +265,7 @@ function requireConnection(url, body, res) {
   return connection;
 }
 
-setInterval(() => {
-  const now = Date.now();
-  for (const [id, connection] of Object.entries(connections)) {
-    if (now - connection.lastUsed > CONNECTION_TTL_MS) {
-      delete connections[id];
-    }
-  }
-}, 60 * 1000).unref();
+// Per-connection expiry timers are used instead of coarse interval cleanup.
 
 const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
