@@ -26,6 +26,23 @@ Each endpoint includes:
 
 All examples assume `http://localhost:3000`.
 
+## Error Format And Codes
+
+All errors return HTTP 200 with this JSON shape:
+
+```json
+{ "error": "message", "status": "error", "code": 1000 }
+```
+
+Common codes:
+- `1000` – missing `connectionId` (`connection_required`).
+- `1001` – unknown or expired `connectionId` (`connection_invalid`).
+- `1002` – missing `chatId` (`chatid_required`).
+- `1003` – body could not be parsed or invalid JSON provided to import endpoints (`invalid_json`).
+- `1004` – request body exceeded server limit (`body_too_large`).
+- `1005` – unknown endpoint (`not_found`).
+- `1006` – unexpected server error (`server_error`).
+
 ## Core Endpoints
 
 ### POST /createconnection
