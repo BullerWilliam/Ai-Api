@@ -12,6 +12,8 @@ const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'llama-3.1-8b-instruct-fast';
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const MAX_BODY_BYTES = 1_000_000;
 const CONNECTION_TTL_MS = 10 * 60 * 1000;
+const SELF_PING_URL = process.env.SELF_PING_URL || '';
+const SELF_PING_INTERVAL_MS = 5 * 60 * 1000;
 
 const connections = {};
 
@@ -269,7 +271,7 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    if (req.method === 'POST' && path === '/createconnection') {
+    if ((req.method === 'POST' || req.method === 'GET') && path === '/createconnection') {
       const connection = createConnection();
       return sendJson(res, 200, { connectionId: connection.id, model: connection.model });
     }
@@ -462,3 +464,13 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`AI API proxy running on port ${PORT}`);
 });
+
+if (SELF_PING_URL) {
+  setInterval(async () => {
+    try {
+      await fetch(SELF_PING_URL, { method: 'GET' });
+    } catch (_) {
+      // Ignore ping errors to avoid crashing.
+    }
+  }, SELF_PING_INTERVAL_MS).unref();
+}
