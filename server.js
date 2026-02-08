@@ -99,6 +99,10 @@ function sendJson(res, status, data) {
   res.end(body);
 }
 
+function sendError(res, message, statusCode = 400) {
+  return sendJson(res, statusCode, { error: message, status: 'error' });
+}
+
 function sendText(res, status, text) {
   res.writeHead(status, {
     'Content-Type': 'text/plain; charset=utf-8',
@@ -224,12 +228,12 @@ function getConnectionId(url, body) {
 function requireConnection(url, body, res) {
   const connectionId = getConnectionId(url, body);
   if (!connectionId) {
-    sendJson(res, 400, { error: 'connectionId required. Call /createconnection first.' });
+    sendError(res, 'connectionId required. Call /createconnection first.');
     return null;
   }
   const connection = connections[connectionId];
   if (!connection) {
-    sendJson(res, 404, { error: 'connectionId not found. Call /createconnection again.' });
+    sendError(res, 'connectionId not valid. Call /createconnection again.', 404);
     return null;
   }
   touchConnection(connection);
@@ -285,9 +289,9 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET' && path === '/model') {
       const connectionId = parseConnectionId(url.searchParams.get('connectionId') || url.searchParams.get('connectionID') || '');
-      if (!connectionId) return sendJson(res, 400, { error: 'connectionId required. Call /createconnection first.' });
+      if (!connectionId) return sendError(res, 'connectionId required. Call /createconnection first.');
       const connection = connections[connectionId];
-      if (!connection) return sendJson(res, 404, { error: 'connectionId not found. Call /createconnection again.' });
+      if (!connection) return sendError(res, 'connectionId not valid. Call /createconnection again.', 404);
       touchConnection(connection);
       return sendJson(res, 200, { model: connection.model });
     }
@@ -322,7 +326,7 @@ const server = http.createServer(async (req, res) => {
       if (!connection) return;
       const prompt = body.prompt || body.PROMPT || '';
       const chatId = parseChatId(body.chatId || body.chatID || '');
-      if (!chatId) return sendJson(res, 400, { error: 'chatId required' });
+      if (!chatId) return sendError(res, 'chatId required');
 
       ensureChat(connection, chatId);
       const userMessage = await processImage(connection, String(prompt));
@@ -349,7 +353,7 @@ const server = http.createServer(async (req, res) => {
       if (!connection) return;
       const chatId = parseChatId(body.chatId || body.chatID || '');
       const inform = body.inform || '';
-      if (!chatId) return sendJson(res, 400, { error: 'chatId required' });
+      if (!chatId) return sendError(res, 'chatId required');
       ensureChat(connection, chatId);
       connection.histories[chatId].push({ role: 'system', content: String(inform) });
       return sendJson(res, 200, { ok: true });
@@ -360,7 +364,7 @@ const server = http.createServer(async (req, res) => {
       const connection = requireConnection(url, body, res);
       if (!connection) return;
       const chatId = parseChatId(body.chatId || body.chatID || '');
-      if (!chatId) return sendJson(res, 400, { error: 'chatId required' });
+      if (!chatId) return sendError(res, 'chatId required');
       ensureChat(connection, chatId);
       return sendJson(res, 200, { ok: true });
     }
@@ -370,7 +374,7 @@ const server = http.createServer(async (req, res) => {
       const connection = requireConnection(url, body, res);
       if (!connection) return;
       const chatId = parseChatId(body.chatId || body.chatID || '');
-      if (!chatId) return sendJson(res, 400, { error: 'chatId required' });
+      if (!chatId) return sendError(res, 'chatId required');
       delete connection.histories[chatId];
       return sendJson(res, 200, { ok: true });
     }
@@ -380,19 +384,19 @@ const server = http.createServer(async (req, res) => {
       const connection = requireConnection(url, body, res);
       if (!connection) return;
       const chatId = parseChatId(body.chatId || body.chatID || '');
-      if (!chatId) return sendJson(res, 400, { error: 'chatId required' });
+      if (!chatId) return sendError(res, 'chatId required');
       connection.histories[chatId] = [];
       return sendJson(res, 200, { ok: true });
     }
 
     if (req.method === 'GET' && (path === '/chat/history' || path === '/op/get_chat_history')) {
       const connectionId = parseConnectionId(url.searchParams.get('connectionId') || url.searchParams.get('connectionID') || '');
-      if (!connectionId) return sendJson(res, 400, { error: 'connectionId required. Call /createconnection first.' });
+      if (!connectionId) return sendError(res, 'connectionId required. Call /createconnection first.');
       const connection = connections[connectionId];
-      if (!connection) return sendJson(res, 404, { error: 'connectionId not found. Call /createconnection again.' });
+      if (!connection) return sendError(res, 'connectionId not valid. Call /createconnection again.', 404);
       touchConnection(connection);
       const chatId = parseChatId(url.searchParams.get('chatId') || url.searchParams.get('chatID') || '');
-      if (!chatId) return sendJson(res, 400, { error: 'chatId required' });
+      if (!chatId) return sendError(res, 'chatId required');
       const history = connection.histories[chatId] || [];
       return sendJson(res, 200, { history, historyJson: JSON.stringify(history) });
     }
@@ -403,12 +407,12 @@ const server = http.createServer(async (req, res) => {
       if (!connection) return;
       const chatId = parseChatId(body.chatId || body.chatID || '');
       const json = body.json || body.JSON || '[]';
-      if (!chatId) return sendJson(res, 400, { error: 'chatId required' });
+      if (!chatId) return sendError(res, 'chatId required');
       try {
         connection.histories[chatId] = JSON.parse(String(json));
         return sendJson(res, 200, { ok: true });
       } catch (_) {
-        return sendJson(res, 400, { error: 'Invalid JSON for history' });
+        return sendError(res, 'Invalid JSON for history');
       }
     }
 
@@ -429,42 +433,42 @@ const server = http.createServer(async (req, res) => {
         }
         return sendJson(res, 200, { ok: true });
       } catch (_) {
-        return sendJson(res, 400, { error: 'Invalid JSON for chats' });
+        return sendError(res, 'Invalid JSON for chats');
       }
     }
 
     if (req.method === 'GET' && (path === '/chats/all' || path === '/op/all_chats')) {
       const connectionId = parseConnectionId(url.searchParams.get('connectionId') || url.searchParams.get('connectionID') || '');
-      if (!connectionId) return sendJson(res, 400, { error: 'connectionId required. Call /createconnection first.' });
+      if (!connectionId) return sendError(res, 'connectionId required. Call /createconnection first.');
       const connection = connections[connectionId];
-      if (!connection) return sendJson(res, 404, { error: 'connectionId not found. Call /createconnection again.' });
+      if (!connection) return sendError(res, 'connectionId not valid. Call /createconnection again.', 404);
       touchConnection(connection);
       return sendJson(res, 200, { chats: connection.histories, chatsJson: JSON.stringify(connection.histories) });
     }
 
     if (req.method === 'GET' && (path === '/chats/active' || path === '/op/active_chats')) {
       const connectionId = parseConnectionId(url.searchParams.get('connectionId') || url.searchParams.get('connectionID') || '');
-      if (!connectionId) return sendJson(res, 400, { error: 'connectionId required. Call /createconnection first.' });
+      if (!connectionId) return sendError(res, 'connectionId required. Call /createconnection first.');
       const connection = connections[connectionId];
-      if (!connection) return sendJson(res, 404, { error: 'connectionId not found. Call /createconnection again.' });
+      if (!connection) return sendError(res, 'connectionId not valid. Call /createconnection again.', 404);
       touchConnection(connection);
       return sendJson(res, 200, { active: Object.keys(connection.histories) });
     }
 
     if (req.method === 'GET' && (path === '/image' || path === '/op/generate_image')) {
       const connectionId = parseConnectionId(url.searchParams.get('connectionId') || url.searchParams.get('connectionID') || '');
-      if (!connectionId) return sendJson(res, 400, { error: 'connectionId required. Call /createconnection first.' });
+      if (!connectionId) return sendError(res, 'connectionId required. Call /createconnection first.');
       const connection = connections[connectionId];
-      if (!connection) return sendJson(res, 404, { error: 'connectionId not found. Call /createconnection again.' });
+      if (!connection) return sendError(res, 'connectionId not valid. Call /createconnection again.', 404);
       touchConnection(connection);
       const prompt = url.searchParams.get('prompt') || url.searchParams.get('PROMPT') || '';
       const imgUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(String(prompt))}?height=1000&width=1000&enhance=true&nologo=true&model=lyriel-1.5-clean`;
       return sendJson(res, 200, { url: imgUrl });
     }
 
-    return sendJson(res, 404, { error: 'Not found' });
+    return sendError(res, 'Not found', 404);
   } catch (err) {
-    return sendJson(res, 500, { error: err.message || 'Server error' });
+    return sendError(res, err.message || 'Server error', 500);
   }
 });
 
