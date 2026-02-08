@@ -1,0 +1,14 @@
+{
+  "name": "ai-api",
+  "version": "1.0.0",
+  "description": "AI proxy API that mimics the PangAI PenguinMod extension.",
+  "main": "server.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "MIT"
+}
