@@ -14,7 +14,7 @@ Server listens on `PORT` (default `3000`).
 
 ## Connections
 
-Before using stateful endpoints, you must create a connection. Each connection has its own model selection, chat histories, and image attachment. If a connection is unused for 10 minutes, the server deletes it automatically.
+Before using most endpoints, you must create a connection. Each connection has its own model selection, chat histories, and image attachment. If a connection is unused for **1 minute**, the server deletes it automatically. Use `POST /keepalive` to refresh the timer.
 
 ## How To Read The Examples
 
@@ -43,6 +43,27 @@ curl -X POST http://localhost:3000/createconnection
 ```bash
 curl -X POST http://localhost:3000/createconnection \
   -H "Accept: application/json"
+```
+
+### POST /keepalive
+
+Purpose: refresh a connection�s idle timer.
+Why: keep a connection alive if the user is idle.
+Parameters:
+- `connectionId` string.
+Expected output: `{ ok: true, connectionId, lastUsed }` because the server touches the connection and returns its updated timestamp.
+How to use: call every 30�50 seconds if you want to prevent cleanup.
+
+```bash
+curl -X POST http://localhost:3000/keepalive \
+  -H "Content-Type: application/json" \
+  -d '{"connectionId":"YOUR_ID"}'
+```
+
+```bash
+curl -X POST http://localhost:3000/keepalive \
+  -H "Content-Type: application/json" \
+  -d '{"connectionID":"YOUR_ID"}'
 ```
 
 ### GET /health
@@ -138,15 +159,15 @@ curl "http://localhost:3000/prompt?type=Stand%20Up%20Comedian%20(Character)%20By
 Purpose: single-turn completion with no chat history.
 Why: quick one-off prompts without state.
 Parameters:
+- `connectionId` string.
 - `prompt` or `PROMPT` string.
-- Optional `connectionId` string. If provided, uses that connection�s model and image attachment.
 Expected output: `{ reply, status, raw }` because the server forwards your prompt to the upstream API and returns the response content plus raw JSON.
-How to use: use without a connection for simple calls, or include `connectionId` to use a custom model.
+How to use: use a valid `connectionId` and send your prompt.
 
 ```bash
 curl -X POST http://localhost:3000/text-no-context \
   -H "Content-Type: application/json" \
-  -d '{"prompt":"Hello there"}'
+  -d '{"connectionId":"YOUR_ID","prompt":"Hello there"}'
 ```
 
 ```bash
@@ -392,16 +413,17 @@ curl -H "Accept: application/json" "http://localhost:3000/chats/active?connectio
 Purpose: generate an image URL based on a prompt.
 Why: mirror the extension�s image generator behavior.
 Parameters:
+- `connectionId` query string.
 - `prompt` or `PROMPT` query string.
 Expected output: `{ url }` because the server constructs a Pollinations URL.
 How to use: open the returned URL in a browser or load it into an image tag.
 
 ```bash
-curl "http://localhost:3000/image?prompt=cyberpunk%20penguin"
+curl "http://localhost:3000/image?connectionId=YOUR_ID&prompt=cyberpunk%20penguin"
 ```
 
 ```bash
-curl "http://localhost:3000/image?prompt=red%20sunset%20over%20ice"
+curl "http://localhost:3000/image?connectionId=YOUR_ID&prompt=red%20sunset%20over%20ice"
 ```
 
 ## Opcode Aliases
@@ -419,7 +441,7 @@ How to use: replace the path only.
 ```bash
 curl -X POST http://localhost:3000/op/generate_text_nocontext \
   -H "Content-Type: application/json" \
-  -d '{"PROMPT":"Hello"}'
+  -d '{"connectionId":"YOUR_ID","PROMPT":"Hello"}'
 ```
 
 ```bash
@@ -645,9 +667,9 @@ Expected output: same as `/image`.
 How to use: replace the path only.
 
 ```bash
-curl "http://localhost:3000/op/generate_image?prompt=cyberpunk%20penguin"
+curl "http://localhost:3000/op/generate_image?connectionId=YOUR_ID&prompt=cyberpunk%20penguin"
 ```
 
 ```bash
-curl "http://localhost:3000/op/generate_image?prompt=red%20sunset%20over%20ice"
+curl "http://localhost:3000/op/generate_image?connectionId=YOUR_ID&prompt=red%20sunset%20over%20ice"
 ```

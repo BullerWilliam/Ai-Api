@@ -11,7 +11,7 @@ const API_URL = process.env.PENGUINMOD_API_URL || 'https://freeai.logise1123.wor
 const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'llama-3.1-8b-instruct-fast';
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const MAX_BODY_BYTES = 1_000_000;
-const CONNECTION_TTL_MS = 10 * 60 * 1000;
+const CONNECTION_TTL_MS = 1 * 60 * 1000;
 const SELF_PING_URL = process.env.SELF_PING_URL || '';
 const SELF_PING_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -276,6 +276,13 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { connectionId: connection.id, model: connection.model });
     }
 
+    if (req.method === 'POST' && path === '/keepalive') {
+      const body = await readJsonBody(req);
+      const connection = requireConnection(url, body, res);
+      if (!connection) return;
+      return sendJson(res, 200, { ok: true, connectionId: connection.id, lastUsed: connection.lastUsed });
+    }
+
     if (req.method === 'GET' && path === '/model') {
       const connectionId = parseConnectionId(url.searchParams.get('connectionId') || url.searchParams.get('connectionID') || '');
       if (!connectionId) return sendJson(res, 400, { error: 'connectionId required. Call /createconnection first.' });
@@ -301,16 +308,11 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'POST' && (path === '/text-no-context' || path === '/op/generate_text_nocontext')) {
       const body = await readJsonBody(req);
-      const connectionId = getConnectionId(url, body);
-      if (connectionId && !connections[connectionId]) {
-        return sendJson(res, 404, { error: 'connectionId not found. Call /createconnection again.' });
-      }
-      const connection = connectionId ? connections[connectionId] : null;
+      const connection = requireConnection(url, body, res);
+      if (!connection) return;
       const prompt = body.prompt || body.PROMPT || '';
-      const userMessage = await processImage(connection || { nextImage: null }, String(prompt));
-      if (connection) touchConnection(connection);
-      const modelToUse = connection ? connection.model : DEFAULT_MODEL;
-      const { reply, raw, status } = await callAi(modelToUse, [userMessage]);
+      const userMessage = await processImage(connection, String(prompt));
+      const { reply, raw, status } = await callAi(connection.model, [userMessage]);
       return sendJson(res, 200, { reply, status, raw });
     }
 
@@ -450,6 +452,11 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && (path === '/image' || path === '/op/generate_image')) {
+      const connectionId = parseConnectionId(url.searchParams.get('connectionId') || url.searchParams.get('connectionID') || '');
+      if (!connectionId) return sendJson(res, 400, { error: 'connectionId required. Call /createconnection first.' });
+      const connection = connections[connectionId];
+      if (!connection) return sendJson(res, 404, { error: 'connectionId not found. Call /createconnection again.' });
+      touchConnection(connection);
       const prompt = url.searchParams.get('prompt') || url.searchParams.get('PROMPT') || '';
       const imgUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(String(prompt))}?height=1000&width=1000&enhance=true&nologo=true&model=lyriel-1.5-clean`;
       return sendJson(res, 200, { url: imgUrl });
