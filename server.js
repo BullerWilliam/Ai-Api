@@ -5,15 +5,15 @@
 
 const http = require('http');
 const { URL } = require('url');
+const crypto = require('crypto');
 
 const API_URL = process.env.PENGUINMOD_API_URL || 'https://freeai.logise1123.workers.dev/';
 const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'llama-3.1-8b-instruct-fast';
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const MAX_BODY_BYTES = 1_000_000;
+const CONNECTION_TTL_MS = 10 * 60 * 1000;
 
-let histories = {};
-let model = DEFAULT_MODEL;
-let nextImage = null;
+const connections = {};
 
 const PROMPTS = {
   'Gibberish (probably does not work) By: u/Fkquaps':
@@ -137,11 +137,11 @@ function getPrompt(type) {
   return PROMPTS[type] || '';
 }
 
-async function processImage(promptText) {
-  if (!nextImage) return { role: 'user', content: promptText };
+async function processImage(connection, promptText) {
+  if (!connection.nextImage) return { role: 'user', content: promptText };
 
   try {
-    const response = await fetch(nextImage);
+    const response = await fetch(connection.nextImage);
     if (!response.ok) throw new Error(`Image fetch failed: ${response.status}`);
     const contentType = response.headers.get('content-type') || 'application/octet-stream';
     const arrayBuffer = await response.arrayBuffer();
@@ -158,11 +158,11 @@ async function processImage(promptText) {
   } catch (_) {
     return { role: 'user', content: promptText };
   } finally {
-    nextImage = null;
+    connection.nextImage = null;
   }
 }
 
-async function callAi(messages) {
+async function callAi(model, messages) {
   const body = { model, messages };
   const response = await fetch(API_URL, {
     method: 'POST',
@@ -185,13 +185,63 @@ async function callAi(messages) {
   };
 }
 
-function ensureChat(chatId) {
-  if (!histories[chatId]) histories[chatId] = [];
+function ensureChat(connection, chatId) {
+  if (!connection.histories[chatId]) connection.histories[chatId] = [];
 }
 
 function parseChatId(value) {
   return typeof value === 'string' && value.trim() ? value.trim() : '';
 }
+
+function createConnection() {
+  const id = crypto.randomUUID();
+  connections[id] = {
+    id,
+    model: DEFAULT_MODEL,
+    histories: {},
+    nextImage: null,
+    lastUsed: Date.now()
+  };
+  return connections[id];
+}
+
+function touchConnection(connection) {
+  connection.lastUsed = Date.now();
+}
+
+function parseConnectionId(value) {
+  return typeof value === 'string' && value.trim() ? value.trim() : '';
+}
+
+function getConnectionId(url, body) {
+  return parseConnectionId(
+    body.connectionId || body.connectionID || url.searchParams.get('connectionId') || url.searchParams.get('connectionID') || ''
+  );
+}
+
+function requireConnection(url, body, res) {
+  const connectionId = getConnectionId(url, body);
+  if (!connectionId) {
+    sendJson(res, 400, { error: 'connectionId required. Call /createconnection first.' });
+    return null;
+  }
+  const connection = connections[connectionId];
+  if (!connection) {
+    sendJson(res, 404, { error: 'connectionId not found. Call /createconnection again.' });
+    return null;
+  }
+  touchConnection(connection);
+  return connection;
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, connection] of Object.entries(connections)) {
+    if (now - connection.lastUsed > CONNECTION_TTL_MS) {
+      delete connections[id];
+    }
+  }
+}, 60 * 1000).unref();
 
 const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
@@ -209,26 +259,37 @@ const server = http.createServer(async (req, res) => {
 
   try {
     if (req.method === 'GET' && path === '/health') {
-      return sendJson(res, 200, { ok: true, model, apiUrl: API_URL });
+      return sendJson(res, 200, { ok: true, apiUrl: API_URL, connections: Object.keys(connections).length });
     }
 
     if (req.method === 'GET' && path === '/meta') {
       return sendJson(res, 200, {
-        model,
         models: MODEL_LIST,
         prompts: Object.keys(PROMPTS)
       });
     }
 
+    if (req.method === 'POST' && path === '/createconnection') {
+      const connection = createConnection();
+      return sendJson(res, 200, { connectionId: connection.id, model: connection.model });
+    }
+
     if (req.method === 'GET' && path === '/model') {
-      return sendJson(res, 200, { model });
+      const connectionId = parseConnectionId(url.searchParams.get('connectionId') || url.searchParams.get('connectionID') || '');
+      if (!connectionId) return sendJson(res, 400, { error: 'connectionId required. Call /createconnection first.' });
+      const connection = connections[connectionId];
+      if (!connection) return sendJson(res, 404, { error: 'connectionId not found. Call /createconnection again.' });
+      touchConnection(connection);
+      return sendJson(res, 200, { model: connection.model });
     }
 
     if (req.method === 'POST' && path === '/model') {
       const body = await readJsonBody(req);
+      const connection = requireConnection(url, body, res);
+      if (!connection) return;
       const next = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : null;
-      if (next) model = next;
-      return sendJson(res, 200, { model });
+      if (next) connection.model = next;
+      return sendJson(res, 200, { model: connection.model });
     }
 
     if (req.method === 'GET' && path === '/prompt') {
@@ -238,83 +299,109 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'POST' && (path === '/text-no-context' || path === '/op/generate_text_nocontext')) {
       const body = await readJsonBody(req);
+      const connectionId = getConnectionId(url, body);
+      if (connectionId && !connections[connectionId]) {
+        return sendJson(res, 404, { error: 'connectionId not found. Call /createconnection again.' });
+      }
+      const connection = connectionId ? connections[connectionId] : null;
       const prompt = body.prompt || body.PROMPT || '';
-      const userMessage = await processImage(String(prompt));
-      const { reply, raw, status } = await callAi([userMessage]);
+      const userMessage = await processImage(connection || { nextImage: null }, String(prompt));
+      if (connection) touchConnection(connection);
+      const modelToUse = connection ? connection.model : DEFAULT_MODEL;
+      const { reply, raw, status } = await callAi(modelToUse, [userMessage]);
       return sendJson(res, 200, { reply, status, raw });
     }
 
     if (req.method === 'POST' && (path === '/chat/send' || path === '/op/send_text_to_chat')) {
       const body = await readJsonBody(req);
+      const connection = requireConnection(url, body, res);
+      if (!connection) return;
       const prompt = body.prompt || body.PROMPT || '';
       const chatId = parseChatId(body.chatId || body.chatID || '');
       if (!chatId) return sendJson(res, 400, { error: 'chatId required' });
 
-      ensureChat(chatId);
-      const userMessage = await processImage(String(prompt));
-      histories[chatId].push(userMessage);
+      ensureChat(connection, chatId);
+      const userMessage = await processImage(connection, String(prompt));
+      connection.histories[chatId].push(userMessage);
 
-      const { reply, raw, status } = await callAi(histories[chatId]);
-      histories[chatId].push({ role: 'assistant', content: reply });
+      const { reply, raw, status } = await callAi(connection.model, connection.histories[chatId]);
+      connection.histories[chatId].push({ role: 'assistant', content: reply });
 
       return sendJson(res, 200, { reply, status, raw });
     }
 
     if (req.method === 'POST' && (path === '/chat/attach-image' || path === '/op/attach_image')) {
       const body = await readJsonBody(req);
+      const connection = requireConnection(url, body, res);
+      if (!connection) return;
       const urlValue = body.url || body.URL || '';
-      nextImage = String(urlValue || '');
-      return sendJson(res, 200, { ok: true, nextImage: !!nextImage });
+      connection.nextImage = String(urlValue || '');
+      return sendJson(res, 200, { ok: true, nextImage: !!connection.nextImage });
     }
 
     if (req.method === 'POST' && (path === '/chat/inform' || path === '/op/inform_chat')) {
       const body = await readJsonBody(req);
+      const connection = requireConnection(url, body, res);
+      if (!connection) return;
       const chatId = parseChatId(body.chatId || body.chatID || '');
       const inform = body.inform || '';
       if (!chatId) return sendJson(res, 400, { error: 'chatId required' });
-      ensureChat(chatId);
-      histories[chatId].push({ role: 'system', content: String(inform) });
+      ensureChat(connection, chatId);
+      connection.histories[chatId].push({ role: 'system', content: String(inform) });
       return sendJson(res, 200, { ok: true });
     }
 
     if (req.method === 'POST' && (path === '/chat/create' || path === '/op/create_chatbot')) {
       const body = await readJsonBody(req);
+      const connection = requireConnection(url, body, res);
+      if (!connection) return;
       const chatId = parseChatId(body.chatId || body.chatID || '');
       if (!chatId) return sendJson(res, 400, { error: 'chatId required' });
-      ensureChat(chatId);
+      ensureChat(connection, chatId);
       return sendJson(res, 200, { ok: true });
     }
 
     if (req.method === 'POST' && (path === '/chat/delete' || path === '/op/delete_chatbot')) {
       const body = await readJsonBody(req);
+      const connection = requireConnection(url, body, res);
+      if (!connection) return;
       const chatId = parseChatId(body.chatId || body.chatID || '');
       if (!chatId) return sendJson(res, 400, { error: 'chatId required' });
-      delete histories[chatId];
+      delete connection.histories[chatId];
       return sendJson(res, 200, { ok: true });
     }
 
     if (req.method === 'POST' && (path === '/chat/reset' || path === '/op/reset_chat')) {
       const body = await readJsonBody(req);
+      const connection = requireConnection(url, body, res);
+      if (!connection) return;
       const chatId = parseChatId(body.chatId || body.chatID || '');
       if (!chatId) return sendJson(res, 400, { error: 'chatId required' });
-      histories[chatId] = [];
+      connection.histories[chatId] = [];
       return sendJson(res, 200, { ok: true });
     }
 
     if (req.method === 'GET' && (path === '/chat/history' || path === '/op/get_chat_history')) {
+      const connectionId = parseConnectionId(url.searchParams.get('connectionId') || url.searchParams.get('connectionID') || '');
+      if (!connectionId) return sendJson(res, 400, { error: 'connectionId required. Call /createconnection first.' });
+      const connection = connections[connectionId];
+      if (!connection) return sendJson(res, 404, { error: 'connectionId not found. Call /createconnection again.' });
+      touchConnection(connection);
       const chatId = parseChatId(url.searchParams.get('chatId') || url.searchParams.get('chatID') || '');
       if (!chatId) return sendJson(res, 400, { error: 'chatId required' });
-      const history = histories[chatId] || [];
+      const history = connection.histories[chatId] || [];
       return sendJson(res, 200, { history, historyJson: JSON.stringify(history) });
     }
 
     if (req.method === 'POST' && (path === '/chat/import-history' || path === '/op/import_history')) {
       const body = await readJsonBody(req);
+      const connection = requireConnection(url, body, res);
+      if (!connection) return;
       const chatId = parseChatId(body.chatId || body.chatID || '');
       const json = body.json || body.JSON || '[]';
       if (!chatId) return sendJson(res, 400, { error: 'chatId required' });
       try {
-        histories[chatId] = JSON.parse(String(json));
+        connection.histories[chatId] = JSON.parse(String(json));
         return sendJson(res, 200, { ok: true });
       } catch (_) {
         return sendJson(res, 400, { error: 'Invalid JSON for history' });
@@ -323,15 +410,17 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'POST' && (path === '/chat/import-chats' || path === '/op/import_chats_merge')) {
       const body = await readJsonBody(req);
+      const connection = requireConnection(url, body, res);
+      if (!connection) return;
       const json = body.json || body.JSON || '{}';
       const merge = body.merge || body.MERGE || 'Merge/Update existing chats';
       try {
         const newChats = JSON.parse(String(json));
         if (merge === 'Remove all chatbots and import') {
-          histories = newChats;
+          connection.histories = newChats;
         } else {
           for (const id of Object.keys(newChats)) {
-            histories[id] = newChats[id];
+            connection.histories[id] = newChats[id];
           }
         }
         return sendJson(res, 200, { ok: true });
@@ -341,11 +430,21 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && (path === '/chats/all' || path === '/op/all_chats')) {
-      return sendJson(res, 200, { chats: histories, chatsJson: JSON.stringify(histories) });
+      const connectionId = parseConnectionId(url.searchParams.get('connectionId') || url.searchParams.get('connectionID') || '');
+      if (!connectionId) return sendJson(res, 400, { error: 'connectionId required. Call /createconnection first.' });
+      const connection = connections[connectionId];
+      if (!connection) return sendJson(res, 404, { error: 'connectionId not found. Call /createconnection again.' });
+      touchConnection(connection);
+      return sendJson(res, 200, { chats: connection.histories, chatsJson: JSON.stringify(connection.histories) });
     }
 
     if (req.method === 'GET' && (path === '/chats/active' || path === '/op/active_chats')) {
-      return sendJson(res, 200, { active: Object.keys(histories) });
+      const connectionId = parseConnectionId(url.searchParams.get('connectionId') || url.searchParams.get('connectionID') || '');
+      if (!connectionId) return sendJson(res, 400, { error: 'connectionId required. Call /createconnection first.' });
+      const connection = connections[connectionId];
+      if (!connection) return sendJson(res, 404, { error: 'connectionId not found. Call /createconnection again.' });
+      touchConnection(connection);
+      return sendJson(res, 200, { active: Object.keys(connection.histories) });
     }
 
     if (req.method === 'GET' && (path === '/image' || path === '/op/generate_image')) {
