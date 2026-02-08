@@ -99,8 +99,8 @@ function sendJson(res, status, data) {
   res.end(body);
 }
 
-function sendError(res, message, statusCode = 400) {
-  return sendJson(res, statusCode, { error: message, status: 'error' });
+function sendError(res, message) {
+  return sendJson(res, 200, { error: message, status: 'error' });
 }
 
 function sendText(res, status, text) {
@@ -466,9 +466,9 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { url: imgUrl });
     }
 
-    return sendError(res, 'Not found', 404);
+    return sendError(res, 'Not found');
   } catch (err) {
-    return sendError(res, err.message || 'Server error', 500);
+    return sendError(res, err.message || 'Server error');
   }
 });
 
