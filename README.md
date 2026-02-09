@@ -83,6 +83,28 @@ curl -X POST http://localhost:3000/keepalive \
   -d '{"connectionID":"YOUR_ID"}'
 ```
 
+### POST /formatting
+
+Purpose: enable or disable formatting in AI replies for a connection.
+Why: disable markdown/code formatting if you only want plain text.
+Parameters:
+- `connectionId` string.
+- `enabled` boolean. `true` keeps formatting, `false` strips it.
+Expected output: `{ ok: true, formattingEnabled }` because the server stores the flag per connection.
+How to use: set once per session; affects `/text-no-context` and `/chat/send`.
+
+```bash
+curl -X POST http://localhost:3000/formatting \
+  -H "Content-Type: application/json" \
+  -d '{"connectionId":"YOUR_ID","enabled":false}'
+```
+
+```bash
+curl -X POST http://localhost:3000/formatting \
+  -H "Content-Type: application/json" \
+  -d '{"connectionId":"YOUR_ID","enabled":true}'
+```
+
 ### GET /health
 
 Purpose: quick health check and server status.

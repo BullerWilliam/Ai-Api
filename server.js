@@ -213,6 +213,23 @@ function parseChatId(value) {
   return typeof value === 'string' && value.trim() ? value.trim() : '';
 }
 
+function stripFormatting(text) {
+  if (typeof text !== 'string') return text;
+  let out = text;
+  out = out.replace(/```[\s\S]*?```/g, (block) => block.replace(/```[a-zA-Z0-9_-]*\n?/, '').replace(/```$/, ''));
+  out = out.replace(/`([^`]+)`/g, '$1');
+  out = out.replace(/\*\*([^*]+)\*\*/g, '$1');
+  out = out.replace(/\*([^*]+)\*/g, '$1');
+  out = out.replace(/__([^_]+)__/g, '$1');
+  out = out.replace(/_([^_]+)_/g, '$1');
+  out = out.replace(/~~([^~]+)~~/g, '$1');
+  out = out.replace(/^#{1,6}\s+/gm, '');
+  out = out.replace(/^\s*[-*+]\s+/gm, '');
+  out = out.replace(/^\s*\d+\.\s+/gm, '');
+  out = out.replace(/\[(.*?)\]\((.*?)\)/g, '$1');
+  return out;
+}
+
 function scheduleConnectionExpiry(connection) {
   if (connection.expiryTimer) clearTimeout(connection.expiryTimer);
   connection.expiryTimer = setTimeout(() => {
@@ -229,7 +246,8 @@ function createConnection() {
     histories: {},
     nextImage: null,
     lastUsed: Date.now(),
-    expiryTimer: null
+    expiryTimer: null,
+    formattingEnabled: true
   };
   scheduleConnectionExpiry(connections[id]);
   return connections[id];
@@ -305,6 +323,16 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true, connectionId: connection.id, lastUsed: connection.lastUsed });
     }
 
+    if (req.method === 'POST' && path === '/formatting') {
+      const body = await readJsonBody(req);
+      const connection = requireConnection(url, body, res);
+      if (!connection) return;
+      const enabledRaw = body.enabled;
+      const enabled = typeof enabledRaw === 'boolean' ? enabledRaw : true;
+      connection.formattingEnabled = enabled;
+      return sendJson(res, 200, { ok: true, formattingEnabled: connection.formattingEnabled });
+    }
+
     if (req.method === 'GET' && path === '/model') {
       const connectionId = parseConnectionId(url.searchParams.get('connectionId') || url.searchParams.get('connectionID') || '');
       if (!connectionId) return sendError(res, 'connectionId required. Call /createconnection first.', ERROR_CODES.CONNECTION_REQUIRED);
@@ -335,7 +363,8 @@ const server = http.createServer(async (req, res) => {
       const prompt = body.prompt || body.PROMPT || '';
       const userMessage = await processImage(connection, String(prompt));
       const { reply, raw, status } = await callAi(connection.model, [userMessage]);
-      return sendJson(res, 200, { reply, status, raw });
+      const finalReply = connection.formattingEnabled ? reply : stripFormatting(reply);
+      return sendJson(res, 200, { reply: finalReply, status, raw });
     }
 
     if (req.method === 'POST' && (path === '/chat/send' || path === '/op/send_text_to_chat')) {
@@ -351,9 +380,10 @@ const server = http.createServer(async (req, res) => {
       connection.histories[chatId].push(userMessage);
 
       const { reply, raw, status } = await callAi(connection.model, connection.histories[chatId]);
-      connection.histories[chatId].push({ role: 'assistant', content: reply });
+      const finalReply = connection.formattingEnabled ? reply : stripFormatting(reply);
+      connection.histories[chatId].push({ role: 'assistant', content: finalReply });
 
-      return sendJson(res, 200, { reply, status, raw });
+      return sendJson(res, 200, { reply: finalReply, status, raw });
     }
 
     if (req.method === 'POST' && (path === '/chat/attach-image' || path === '/op/attach_image')) {
