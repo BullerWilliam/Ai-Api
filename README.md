@@ -5,9 +5,8 @@ Lightweight Node.js HTTP server that mimics the PangAI PenguinMod extension and 
 ## Run
 
 ```powershell
-$env:POLLINATIONS_TEXT_API_URL='https://text.pollinations.ai/openai'
-$env:POLLINATIONS_API_KEY=''
-$env:DEFAULT_MODEL='openai'
+$env:PENGUINMOD_API_URL='https://freeai.logise1123.workers.dev/'
+$env:DEFAULT_MODEL='llama-3.1-8b-instruct-fast'
 node server.js
 ```
 
@@ -43,8 +42,6 @@ Common codes:
 - `1004` – request body exceeded server limit (`body_too_large`).
 - `1005` – unknown endpoint (`not_found`).
 - `1006` – unexpected server error (`server_error`).
-- `1007` – model not found (`model_invalid`).
-- `1008` – upstream API error (`upstream_error`).
 
 ## Core Endpoints
 
@@ -164,13 +161,13 @@ Why: switch models without restarting the server.
 Parameters:
 - `connectionId` string.
 - `model` string. Any model ID from `/meta`.
-Expected output: `{ model }` because the server updates its per‑connection model.
-How to use: send once, then keep using `/chat/send` or `/text-no-context` with the same connection. With Pollinations, `openai` is a safe default.
+Expected output: `{ model }` because the server updates its per-connection model.
+How to use: send once, then keep using `/chat/send` or `/text-no-context` with the same connection.
 
 ```bash
 curl -X POST http://localhost:3000/model \
   -H "Content-Type: application/json" \
-  -d '{"connectionId":"YOUR_ID","model":"openai"}'
+  -d '{"connectionId":"YOUR_ID","model":"llama-3.1-8b-instruct-fast"}'
 ```
 
 ```bash
