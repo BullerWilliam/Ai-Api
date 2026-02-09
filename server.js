@@ -7,7 +7,8 @@ const http = require('http');
 const { URL } = require('url');
 const crypto = require('crypto');
 
-const API_URL = process.env.PENGUINMOD_API_URL || 'https://freeai.logise1123.workers.dev/';
+const API_URL = process.env.POLLINATIONS_TEXT_API_URL || 'https://text.pollinations.ai/openai';
+const POLLINATIONS_API_KEY = process.env.POLLINATIONS_API_KEY || '';
 const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'llama-3.1-8b-instruct-fast';
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const MAX_BODY_BYTES = 1_000_000;
@@ -184,9 +185,13 @@ async function processImage(connection, promptText) {
 
 async function callAi(model, messages) {
   const body = { model, messages };
+  const headers = { 'Content-Type': 'application/json' };
+  if (POLLINATIONS_API_KEY) {
+    headers.Authorization = `Bearer ${POLLINATIONS_API_KEY}`;
+  }
   const response = await fetch(API_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(body)
   });
 

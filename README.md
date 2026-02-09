@@ -5,7 +5,8 @@ Lightweight Node.js HTTP server that mimics the PangAI PenguinMod extension and 
 ## Run
 
 ```powershell
-$env:PENGUINMOD_API_URL='https://freeai.logise1123.workers.dev/'
+$env:POLLINATIONS_TEXT_API_URL='https://text.pollinations.ai/openai'
+$env:POLLINATIONS_API_KEY=''
 $env:DEFAULT_MODEL='llama-3.1-8b-instruct-fast'
 node server.js
 ```
