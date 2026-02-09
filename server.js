@@ -9,7 +9,7 @@ const crypto = require('crypto');
 
 const API_URL = process.env.POLLINATIONS_TEXT_API_URL || 'https://text.pollinations.ai/openai';
 const POLLINATIONS_API_KEY = process.env.POLLINATIONS_API_KEY || 'sk_wiHJAIai35eLAJS9jY3NY0SGmbEaJ6Ke';
-const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'llama-3.1-8b-instruct-fast';
+const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'openai';
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const MAX_BODY_BYTES = 1_000_000;
 const CONNECTION_TTL_MS = 1 * 60 * 1000;
@@ -36,6 +36,7 @@ const PROMPTS = {
 };
 
 const MODEL_LIST = [
+  'openai',
   'llama-4-scout-17b-16e-instruct',
   'llama-3.3-70b-instruct-fp8-fast',
   'llama-3.1-8b-instruct-fast',
@@ -111,7 +112,9 @@ const ERROR_CODES = {
   INVALID_JSON: 1003,
   BODY_TOO_LARGE: 1004,
   NOT_FOUND: 1005,
-  SERVER_ERROR: 1006
+  SERVER_ERROR: 1006,
+  MODEL_INVALID: 1007,
+  UPSTREAM_ERROR: 1008
 };
 
 function sendText(res, status, text) {
@@ -200,6 +203,14 @@ async function callAi(model, messages) {
     data = await response.json();
   } catch (_) {
     data = {};
+  }
+
+  if (data && data.error) {
+    return {
+      error: data.error,
+      raw: data,
+      status: response.status
+    };
   }
 
   const reply = data?.choices?.[0]?.message?.content;
@@ -367,7 +378,11 @@ const server = http.createServer(async (req, res) => {
       if (!connection) return;
       const prompt = body.prompt || body.PROMPT || '';
       const userMessage = await processImage(connection, String(prompt));
-      const { reply, raw, status } = await callAi(connection.model, [userMessage]);
+      const { reply, raw, status, error } = await callAi(connection.model, [userMessage]);
+      if (error) {
+        const isModelError = typeof error === 'string' && error.toLowerCase().includes('model not found');
+        return sendError(res, error, isModelError ? ERROR_CODES.MODEL_INVALID : ERROR_CODES.UPSTREAM_ERROR);
+      }
       const finalReply = connection.formattingEnabled ? reply : stripFormatting(reply);
       return sendJson(res, 200, { reply: finalReply, status, raw });
     }
@@ -384,7 +399,11 @@ const server = http.createServer(async (req, res) => {
       const userMessage = await processImage(connection, String(prompt));
       connection.histories[chatId].push(userMessage);
 
-      const { reply, raw, status } = await callAi(connection.model, connection.histories[chatId]);
+      const { reply, raw, status, error } = await callAi(connection.model, connection.histories[chatId]);
+      if (error) {
+        const isModelError = typeof error === 'string' && error.toLowerCase().includes('model not found');
+        return sendError(res, error, isModelError ? ERROR_CODES.MODEL_INVALID : ERROR_CODES.UPSTREAM_ERROR);
+      }
       const finalReply = connection.formattingEnabled ? reply : stripFormatting(reply);
       connection.histories[chatId].push({ role: 'assistant', content: finalReply });
 
@@ -526,6 +545,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (err && err.code === 'body_too_large') {
       return sendError(res, 'Body too large', ERROR_CODES.BODY_TOO_LARGE);
+    }
+    if (err && err.code === 'model_invalid') {
+      return sendError(res, err.message || 'Model not found', ERROR_CODES.MODEL_INVALID);
     }
     return sendError(res, err.message || 'Server error', ERROR_CODES.SERVER_ERROR);
   }
